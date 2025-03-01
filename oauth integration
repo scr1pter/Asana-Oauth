@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asana Board with Google Login</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #2d2d2d;
+            color: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin: 10px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        .board {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .project {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .project h2 {
+            margin-top: 0;
+            font-size: 1.5em;
+            color: #2d2d2d;
+        }
+        .sections {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .section {
+            background: white;
+            padding: 10px;
+            border-radius: 6px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+        .section h3 {
+            margin: 0 0 10px;
+            font-size: 1.2em;
+            color: #2d2d2d;
+        }
+        .task {
+            background: white;
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            border: 1px solid #e0e0e0;
+            font-size: 0.9em;
+            transition: box-shadow 0.2s ease;
+        }
+        .task:hover {
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        .task input, .task select, .task textarea {
+            width: 100%;
+            margin-top: 5px;
+            padding: 5px;
+            background: white;
+            color: #2d2d2d;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .task textarea {
+            resize: vertical;
+            height: 60px;
+        }
+        .task select {
+            cursor: pointer;
+        }
+        @media (max-width: 768px) {
+            .board {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+    <!-- Google OAuth Library -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+    <h1>My Asana Board</h1>
+    <div id="google-login"></div>
+    <div id="board" class="board"></div>
+
+    <script>
+        // Replace with your Google and Asana credentials
+        const GOOGLE_CLIENT_ID = "420762093730-tn6vhi8morhl8698325a54q8ur61anqt.apps.googleusercontent.com";
+        const ASANA_CLIENT_ID = "1209384504244203";
+        const ASANA_CLIENT_SECRET = "8cfdf2726365d2b6ec4fdaef8d86ff42";
+        const ASANA_REDIRECT_URI = "notworking"; // Update with your redirect URI
+
+        let asanaAccessToken = null;
+
+        // Initialize Google Login
+        function initializeGoogleLogin() {
+            google.accounts.id.initialize({
+                client_id: GOOGLE_CLIENT_ID,
+                callback: handleGoogleLogin,
+            });
+            google.accounts.id.renderButton(document.getElementById("google-login"), {
+                theme: "outline",
+                size: "large",
+            });
+        }
+
+        // Handle Google Login
+        function handleGoogleLogin(response) {
+            const user = decodeJWT(response.credential);
+            console.log("Logged in as:", user.name);
+            authenticateWithAsana();
+        }
+
+        // Decode JWT
+        function decodeJWT(token) {
+            const base64Url = token.split(".")[1];
+            const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+            return JSON.parse(atob(base64));
+        }
+
+        // Authenticate with Asana
+        function authenticateWithAsana() {
+            const authUrl = `https://app.asana.com/-/oauth_authorize?client_id=${ASANA_CLIENT_ID}&redirect_uri=${ASANA_REDIRECT_URI}&response_type=code&scope=default`;
+            window.location.href = authUrl;
+        }
+
+        // Exchange Asana authorization code for access token
+        async function getAsanaAccessToken(code) {
+            const response = await fetch("https://app.asana.com/-/oauth_token", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                body: new URLSearchParams({
+                    grant_type: "authorization_code",
+                    client_id: ASANA_CLIENT_ID,
+                    client_secret: ASANA_CLIENT_SECRET,
+                    redirect_uri: ASANA_REDIRECT_URI,
+                    code: code,
+                }),
+            });
+            const data = await response.json();
+            asanaAccessToken = data.access_token;
+            fetchAsanaBoard();
+        }
+
+        // Fetch Asana projects and tasks
+        async function fetchAsanaBoard() {
+            try {
+                const projectsResponse = await fetch("https://app.asana.com/api/1.0/projects?opt_fields=name", {
+                    method: "GET",
+                    headers: {
+                        Authorization: `Bearer ${asanaAccessToken}`,
+                        Accept: "application/json",
+                    },
+                });
+                const projectsData = await projectsResponse.json();
+                const projects = projectsData.data;
+
+                let allTasks = [];
+                for (const project of projects) {
+                    const tasksResponse = await fetch(`https://app.asana.com/api/1.0/projects/${project.gid}/tasks?opt_fields=name,due_on,completed,memberships.section.name,custom_fields,notes`, {
+                        method: "GET",
+                        headers: {
+                            Authorization: `Bearer ${asanaAccessToken}`,
+                            Accept: "application/json",
+                        },
+                    });
+                    const tasksData = await tasksResponse.json();
+                    const tasks = tasksData.data.map(task => ({ ...task, projectName: project.name }));
+                    allTasks = allTasks.concat(tasks);
+                }
+
+                displayBoard(allTasks);
+            } catch (error) {
+                alert(`Error fetching board: ${error.message}`);
+            }
+        }
+
+        // Display the board
+        function displayBoard(tasks) {
+            const boardDiv = document.getElementById("board");
+            boardDiv.innerHTML = "";
+
+            const projects = {};
+            tasks.forEach(task => {
+                const projectName = task.projectName;
+                const section = task.memberships.length > 0 ? task.memberships[0].section.name : "Uncategorized";
+                if (!projects[projectName]) {
+                    projects[projectName] = {};
+                }
+                if (!projects[projectName][section]) {
+                    projects[projectName][section] = [];
+                }
+                projects[projectName][section].push(task);
+            });
+
+            for (const [projectName, sections] of Object.entries(projects)) {
+                const projectDiv = document.createElement("div");
+                projectDiv.classList.add("project");
+                projectDiv.innerHTML = `<h2>${projectName}</h2>`;
+
+                const sectionsDiv = document.createElement("div");
+                sectionsDiv.classList.add("sections");
+
+                for (const [section, tasks] of Object.entries(sections)) {
+                    const sectionDiv = document.createElement("div");
+                    sectionDiv.classList.add("section");
+                    sectionDiv.innerHTML = `<h3>${section}</h3>`;
+
+                    tasks.forEach(task => {
+                        const priorityField = task.custom_fields.find(field => field.name.toLowerCase().includes("priority"));
+                        const priorityOptions = priorityField && priorityField.enum_options ? priorityField.enum_options : [];
+                        const priorityValue = priorityField ? priorityField.display_value : "None";
+                        const priorityId = priorityField ? priorityField.gid : null;
+                        
+                        const taskElement = document.createElement("div");
+                        taskElement.classList.add("task");
+                        taskElement.innerHTML = `
+                            <strong>Task:</strong> <input type="text" value="${task.name}" onchange="updateTask('${task.gid}', this.value, 'name')"><br>
+                            <strong>Due Date:</strong> <input type="date" value="${task.due_on || ''}" onchange="updateTask('${task.gid}', this.value, 'due_on')"><br>
+                            <strong>Priority:</strong> <select onchange="updatePriority('${task.gid}', this.value, '${priorityId}')">
+                                ${priorityOptions.map(option => `<option value="${option.gid}" ${priorityValue === option.name ? "selected" : ""}>${option.name}</option>`).join('')}
+                            </select><br>
+                            <strong>Description:</strong> <textarea onchange="updateTask('${task.gid}', this.value, 'notes')">${task.notes || ''}</textarea>
+                        `;
+                        sectionDiv.appendChild(taskElement);
+                    });
+
+                    sectionsDiv.appendChild(sectionDiv);
+                }
+
+                projectDiv.appendChild(sectionsDiv);
+                boardDiv.appendChild(projectDiv);
+            }
+        }
+
+        // Update task
+        async function updateTask(taskId, value, field) {
+            const body = {};
+            body[field] = value;
+            try {
+                await fetch(`https://app.asana.com/api/1.0/tasks/${taskId}`, {
+                    method: "PUT",
+                    headers: {
+                        Authorization: `Bearer ${asanaAccessToken}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ data: body }),
+                });
+            } catch (error) {
+                alert(`Error updating task: ${error.message}`);
+            }
+        }
+
+        // Update priority
+        async function updatePriority(taskId, value, priorityId) {
+            if (!priorityId) return;
+            const body = { custom_fields: { [priorityId]: value } };
+            try {
+                await fetch(`https://app.asana.com/api/1.0/tasks/${taskId}`, {
+                    method: "PUT",
+                    headers: {
+                        Authorization: `Bearer ${asanaAccessToken}`,
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({ data: body }),
+                });
+            } catch (error) {
+                alert(`Error updating priority: ${error.message}`);
+            }
+        }
+
+        // Initialize Google Login on page load
+        window.onload = initializeGoogleLogin;
+
+        // Handle Asana OAuth callback
+        const urlParams = new URLSearchParams(window.location.search);
+        const code = urlParams.get("code");
+        if (code) {
+            getAsanaAccessToken(code);
+        }
+    </script>
+</body>
+</html>
